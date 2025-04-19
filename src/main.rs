@@ -32,7 +32,7 @@ impl GameServer {
     }
 
     /// Spawn the listening task that receives client packets
-    fn start_listener(self: Arc<Self>) {
+    pub fn start_listener(self: Arc<Self>) {
         let socket = Arc::clone(&self.socket);
         let players = Arc::clone(&self.players);
 
@@ -45,13 +45,14 @@ impl GameServer {
                         let mut players_lock = players.lock().await;
                         if !players_lock.contains_key(&addr) {
                             // New player
+                            let plr = self.create_player(addr, data).await;
+                            // Player::new(name, snake, addr)
                             println!("New player from {}", addr);
-                            let player = Player { addr };
-                            players_lock.insert(addr, player);
-                            create_player(addr, data).await;
+                            players_lock.insert(addr, plr);
+                            
                         } else {
                             // Existing player
-                            handle_command(addr, data).await;
+                            self.handle_command(addr, data).await;
                         }
                     }
                     Err(e) => {
@@ -63,7 +64,7 @@ impl GameServer {
     }
 
     /// Handle incoming commands from existing players
-    async fn handle_command(&mut self, addr: SocketAddr, data: &[u8]) {
+    async fn handle_command(&self, addr: SocketAddr, data: &[u8]) {
         let message = String::from_utf8_lossy(data);
         let splitted: Vec<&str> = message.split(',').collect();
 
@@ -148,7 +149,7 @@ impl GameServer {
     }
 
     /// Handle creation of a new player
-    async fn create_player(&mut self, addr: SocketAddr, data: &[u8]) {
+    async fn create_player(&self, addr: SocketAddr, data: &[u8])-> Player {
         // Parse initial data, send welcome or initial state
         println!("Creating player {}: {:?}", addr, data);
         let welcome = b"Welcome to the game!";
