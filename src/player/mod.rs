@@ -33,6 +33,10 @@ impl Player {
         }
     }
 
+    pub fn get_snake(&mut self)-> &mut Snake{
+        &mut self.snake
+    }
+
     pub fn update_xy(&mut self, x: f64, y: f64, win_w: u32, win_h: u32) {
         self.move_x = x;
         self.move_y = y;
@@ -77,5 +81,11 @@ impl Clone for Player {
             window_h: self.window_h,
             last_seen: self.last_seen,
         }
+    }
+}
+
+impl PartialEq for Player {
+    fn eq(&self, other: &Self) -> bool {
+        self.addr == other.addr
     }
 }
