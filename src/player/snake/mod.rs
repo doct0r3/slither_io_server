@@ -15,7 +15,7 @@ pub struct SnakeNode {
 #[derive(Clone)]
 pub struct Snake {
     pub length: i32,
-    pub skin: String,
+    pub skin: i32,
     pub speed: f64,
     pub current_speed_sec: f64,
     pub nodes: Vec<SnakeNode>,
@@ -45,7 +45,7 @@ fn create_first_five_nodes(initial_x: f64, initial_y: f64) -> Vec<SnakeNode> {
 }
 
 impl Snake {
-    pub fn new(length: i32, skin: String, speed: f64) -> Snake {
+    pub fn new(length: i32, skin: i32, speed: f64) -> Snake {
         let map_border_w = BORDER_WIDTH - MAP_WIDTH;
         let map_border_h = BORDER_HEIGHT - MAP_HEIGHT;
         let initial_x =
