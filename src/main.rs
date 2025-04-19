@@ -13,7 +13,7 @@ use std::{
 
 use tokio::{
     net::UdpSocket,
-    sync::{Mutex, MutexGuard},
+    sync::Mutex,
     time::{self, Duration},
 };
 
