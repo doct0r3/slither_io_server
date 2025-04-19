@@ -1,11 +1,12 @@
+mod player;
+mod bait;
+
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{net::UdpSocket, sync::Mutex, time::{self, Duration}};
 
-/// Represents a connected player
-struct Player {
-    addr: SocketAddr,
-    // you can store more player state here (e.g., last_command, position, etc.)
-}
+use crate::player::{Player,snake::Snake};
+use crate::bait::Bait;
+
 
 /// Main game server struct
 struct GameServer {
