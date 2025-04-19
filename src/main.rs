@@ -13,7 +13,7 @@ use std::{
 
 use tokio::{
     net::UdpSocket,
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard},
     time::{self, Duration},
 };
 
@@ -61,8 +61,8 @@ pub fn generate_mass_bait(snake: &Snake) -> Vec<bait::Bait> {
 /// Main game server struct
 struct GameServer {
     socket: Arc<UdpSocket>,
-    players: Arc<Mutex<HashMap<SocketAddr, Player>>>,
-    baits: Arc<Mutex<Vec<Bait>>>,
+    players: Arc<RwLock<HashMap<SocketAddr, Player>>>,
+    baits: Arc<RwLock<Vec<Bait>>>,
 }
 
 impl GameServer {
@@ -71,8 +71,8 @@ impl GameServer {
         let socket = UdpSocket::bind(bind_addr).await?;
         Ok(Self {
             socket: Arc::new(socket),
-            players: Arc::new(Mutex::new(HashMap::new())),
-            baits: Arc::new(Mutex::new(Vec::new())),
+            players: Arc::new(RwLock::new(HashMap::new())),
+            baits: Arc::new(RwLock::new(Vec::new())),
         })
     }
 
@@ -87,7 +87,7 @@ impl GameServer {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, addr)) => {
                         let data = &buf[..len];
-                        let mut players_lock = players.lock().await;
+                        let mut players_lock = players.write().await;
                         if !players_lock.contains_key(&addr) {
                             // let lk1 = players_lock.clone();
                             // New player
@@ -110,7 +110,7 @@ impl GameServer {
     }
 
     /// Handle incoming commands from existing players
-    async fn handle_command(&self, addr: SocketAddr, data: &[u8], mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
+    async fn handle_command(&self, addr: SocketAddr, data: &[u8], players_lock: RwLockWriteGuard<'_, HashMap<SocketAddr, Player>>) {
         let message = String::from_utf8_lossy(data);
         let splitted: Vec<&str> = message.split(',').collect();
 
@@ -119,10 +119,10 @@ impl GameServer {
         }
 
         println!("{}", message);
-        // let mut lk = players_lock.clone();
+        let mut lk = players_lock.clone();
 
         // Try to find the player by address
-        let player_id_opt = players_lock.get_mut(&addr);
+        let player_id_opt = lk.get_mut(&addr);
         // println!("{}", player_id_opt.unwrap_or(0));
 
         match splitted[0] {
@@ -130,6 +130,10 @@ impl GameServer {
                 // Update player's mouse position
                 if let Some(player_id) = player_id_opt {
                     if splitted.len() >= 5 {
+                        if splitted[1].parse().unwrap_or(0.0) == 0.0 {
+                            println!("RESET!!!");
+                            
+                        }
                         player_id.update_xy(
                             splitted[1].parse().unwrap_or(0.0),
                             splitted[2].parse().unwrap_or(0.0),
@@ -152,11 +156,11 @@ impl GameServer {
                         let msg_enemy_name =
                             format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
 
-                        // for &i in players_lock.keys() {
-                        //     if i != player.addr {
-                        //         self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
-                        //     }
-                        // }
+                        for &i in players_lock.keys() {
+                            if i != player.addr {
+                                self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
+                            }
+                        }
                     }
                 }
             }
@@ -182,10 +186,11 @@ impl GameServer {
     async fn game_loop(self: Arc<Self>) {
         let mut interval = time::interval(Duration::from_millis(10));
         loop {
+            
             interval.tick().await;
             let mut new_bait_arr = Vec::new();
 
-            let mut cur_bait = self.baits.lock().await;
+            let mut cur_bait = self.baits.write().await;
             let mut msg_new_bait_arr = String::new();
             let mut dead_players = Vec::new();
 
@@ -197,7 +202,8 @@ impl GameServer {
             }
 
             // Update all player positions
-            let mut players_lock = self.players.lock().await;
+            let mut players_lock = self.players.write().await;
+
             for player in players_lock.values_mut() {
                 let move_x = player.move_x;
                 let move_y = player.move_y;
@@ -501,7 +507,7 @@ impl GameServer {
     }
     /// Handle creation of a new player
 
-    async fn create_player(&self, addr: SocketAddr, mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
+    async fn create_player(&self, addr: SocketAddr, mut players_lock: RwLockWriteGuard<'_, HashMap<SocketAddr, Player>>) {
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -573,7 +579,7 @@ impl GameServer {
         }
 
         // Send all baits to the new player
-        let bait = self.baits.lock().await;
+        let bait = self.baits.read().await;
         for bait_info in bait.iter() {
             let bait_msg = format!(
                 "{}3,{},{},{}",
@@ -598,7 +604,7 @@ async fn main() -> tokio::io::Result<()> {
     server.clone().start_listener();
 
     // Start the game loop in background
-    let game_handle = tokio::spawn(server.clone().game_loop());
+    let game_handle = server.clone().game_loop().await;
     println!("Running...");
     // Wait for Ctrl-C to shut down
     tokio::signal::ctrl_c()
@@ -606,8 +612,8 @@ async fn main() -> tokio::io::Result<()> {
         .expect("failed to listen for ctrl-c");
     println!("Shutting down server...");
 
-    // Stop the game loop
-    game_handle.abort();
+    // // Stop the game loop
+    // game_handle.abort();
 
     Ok(())
 }
