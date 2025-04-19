@@ -89,14 +89,17 @@ impl GameServer {
                         let data = &buf[..len];
                         let mut players_lock = players.lock().await;
                         if !players_lock.contains_key(&addr) {
+                            let lk1 = players_lock.clone();
                             // New player
-                            let plr = self.create_player(addr, players_lock).await;
+                            let plr = self.create_player(addr, lk1).await;
                             // Player::new(name, snake, addr)
                             println!("New player from {}", addr);
                             players_lock.insert(addr, plr);
                         } else {
+                            let lk2 = players_lock.clone();
+
                             // Existing player
-                            self.handle_command(addr, data, players_lock).await;
+                            self.handle_command(addr, data, lk2).await;
                         }
                     }
                     Err(e) => {
@@ -108,7 +111,7 @@ impl GameServer {
     }
 
     /// Handle incoming commands from existing players
-    async fn handle_command(&self, addr: SocketAddr, data: &[u8], players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
+    async fn handle_command(&self, addr: SocketAddr, data: &[u8], players_lock: HashMap<SocketAddr, Player>) {
         let message = String::from_utf8_lossy(data);
         let splitted: Vec<&str> = message.split(',').collect();
 
@@ -117,7 +120,7 @@ impl GameServer {
         }
 
         println!("{}", message);
-        let mut lk = players_lock;
+        let mut lk = players_lock.clone();
 
         // Try to find the player by address
         let player_id_opt = lk.get_mut(&addr);
@@ -322,7 +325,7 @@ impl GameServer {
             }
 
             // Check if a player eats a bait
-            let bt_lk = cur_bait;
+            let bt_lk = cur_bait.clone();
             let bait_key = &bt_lk.iter().enumerate();
             let mut deleted_baits = Vec::new();
             let mut msg_grown_players = String::new();
@@ -453,7 +456,7 @@ impl GameServer {
             }
 
             // Clean up inactive players (UDP connection management)
-            let inactive_players = self.clean_inactive_players(30, players_lock).await; // 30 seconds timeout
+            let inactive_players = self.clean_inactive_players(30, players_lock.clone()).await; // 30 seconds timeout
             for id in inactive_players {
                 println!("Player {} disconnected due to inactivity", id);
                 let msg = format!("{}7,{}", COMM_START_NEW_MESS, id);
@@ -475,7 +478,7 @@ impl GameServer {
     }
 
     // Remove players that haven't been seen in a while (UDP connection management)
-    pub async fn clean_inactive_players(&self, timeout_secs: u64, players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) -> Vec<SocketAddr> {
+    pub async fn clean_inactive_players(&self, timeout_secs: u64, players_lock: HashMap<SocketAddr, Player>) -> Vec<SocketAddr> {
         let mut inactive_ids = Vec::new();
         let mut plr = players_lock;
         let players = plr.clone().into_iter();
@@ -499,7 +502,7 @@ impl GameServer {
     }
     /// Handle creation of a new player
 
-    async fn create_player(&self, addr: SocketAddr, players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) -> Player {
+    async fn create_player(&self, addr: SocketAddr, players_lock: HashMap<SocketAddr, Player>) -> Player {
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -590,14 +593,14 @@ impl GameServer {
 #[tokio::main]
 async fn main() -> tokio::io::Result<()> {
     // Bind UDP socket and create the game server
-    let server = Arc::new(GameServer::new("0.0.0.0:8080").await?);
+    let server = Arc::new(GameServer::new("0.0.0.0:5000").await?);
 
     // Start the listener task
     server.clone().start_listener();
 
     // Start the game loop in background
     let game_handle = tokio::spawn(server.clone().game_loop());
-
+    println!("Running...");
     // Wait for Ctrl-C to shut down
     tokio::signal::ctrl_c()
         .await
