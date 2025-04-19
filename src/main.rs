@@ -95,10 +95,10 @@ impl GameServer {
                             // Player::new(name, snake, addr)
                             println!("New player from {}", addr);
                         } else {
-                            let lk2 = players_lock.clone();
+                            // let lk2 = players_lock.clone();
 
                             // Existing player
-                            self.handle_command(addr, data, lk2).await;
+                            self.handle_command(addr, data, players_lock).await;
                         }
                     }
                     Err(e) => {
@@ -110,7 +110,7 @@ impl GameServer {
     }
 
     /// Handle incoming commands from existing players
-    async fn handle_command(&self, addr: SocketAddr, data: &[u8], players_lock: HashMap<SocketAddr, Player>) {
+    async fn handle_command(&self, addr: SocketAddr, data: &[u8], mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
         let message = String::from_utf8_lossy(data);
         let splitted: Vec<&str> = message.split(',').collect();
 
@@ -119,10 +119,10 @@ impl GameServer {
         }
 
         println!("{}", message);
-        let mut lk = players_lock.clone();
+        // let mut lk = players_lock.clone();
 
         // Try to find the player by address
-        let player_id_opt = lk.get_mut(&addr);
+        let player_id_opt = players_lock.get_mut(&addr);
         // println!("{}", player_id_opt.unwrap_or(0));
 
         match splitted[0] {
@@ -152,11 +152,11 @@ impl GameServer {
                         let msg_enemy_name =
                             format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
 
-                        for &i in players_lock.keys() {
-                            if i != player.addr {
-                                self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
-                            }
-                        }
+                        // for &i in players_lock.keys() {
+                        //     if i != player.addr {
+                        //         self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
+                        //     }
+                        // }
                     }
                 }
             }
