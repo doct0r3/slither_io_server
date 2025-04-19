@@ -119,7 +119,7 @@ impl GameServer {
         }
 
         println!("{}", message);
-        // let mut lk = players_lock.clone();
+        let lk = players_lock.clone();
 
         // Try to find the player by address
         let player_id_opt = players_lock.get_mut(&addr);
@@ -152,11 +152,11 @@ impl GameServer {
                         let msg_enemy_name =
                             format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
 
-                        // for &i in players_lock.keys() {
-                        //     if i != player.addr {
-                        //         self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
-                        //     }
-                        // }
+                        for &i in lk.keys() {
+                            if i != player.addr {
+                                self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
+                            }
+                        }
                     }
                 }
             }
@@ -180,12 +180,17 @@ impl GameServer {
 
     /// Game loop: sends updates to all clients every 10 ms
     async fn game_loop(self: Arc<Self>) {
-        let mut interval = time::interval(Duration::from_millis(10));
+        // let mut last_time = SystemTime::now();
+        let mut interval = time::interval(Duration::from_millis(GAME_LOOP_DELAY as u64));
+        
         loop {
             interval.tick().await;
+            let baits_c = Arc::clone(&self.baits);
+            let player_c = Arc::clone(&self.players);
+            // println!("Tick");
             let mut new_bait_arr = Vec::new();
 
-            let mut cur_bait = self.baits.lock().await;
+            let mut cur_bait = baits_c.lock().await;
             let mut msg_new_bait_arr = String::new();
             let mut dead_players = Vec::new();
 
@@ -197,7 +202,7 @@ impl GameServer {
             }
 
             // Update all player positions
-            let mut players_lock = self.players.lock().await;
+            let mut players_lock = player_c.lock().await;
             for player in players_lock.values_mut() {
                 let move_x = player.move_x;
                 let move_y = player.move_y;
@@ -280,6 +285,7 @@ impl GameServer {
                             {
                                 eprintln!("Failed to send welcome to {}: {}", other_player.addr, e);
                             }
+
 
                             break;
                         }
@@ -396,6 +402,7 @@ impl GameServer {
                         msg_update_player.push(',');
                     }
                 }
+                println!("Send msg_update_player {} to{}",msg_update_player,player.addr);
                 if let Err(e) = self
                     .socket
                     .send_to(msg_update_player.as_bytes(), player.addr)

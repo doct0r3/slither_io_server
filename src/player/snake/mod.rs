@@ -206,6 +206,7 @@ impl Snake {
             if self.nodes[0].y + SNAKE_INITIAL_SIZE / 2.0 > TRUE_MAP_HEIGHT {
                 self.nodes[0].y = TRUE_MAP_HEIGHT - SNAKE_INITIAL_SIZE / 2.0;
             }
+            println!("Moved. head at {} {}" , self.nodes[0].x , self.nodes[0].y);
         }
     }
 

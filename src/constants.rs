@@ -1,12 +1,7 @@
 // SNAKE
 pub const SNAKE_INITIAL_LENGTH: usize = 5;
-pub const SNAKE_SPEED: f64 = 1.0;
-pub const SNAKE_SPEED_ACCELERATE: f64 = 2.0;
-pub const SNAKE_SPEED_PLUS: f64 = 0.2;
-pub const SNAKE_SPEED_SLOW: f64 = 0.5;
-pub const SNAKE_DOT_SPEED: f64 = 0.7;
-pub const SNAKE_SPEED_AFTER_SEC: i32 = 50;
-pub const SNAKE_SPEED_BOOST: f64 = 3.0;
+pub const SNAKE_SPEED: f64 = 2.0;
+pub const SNAKE_SPEED_ACCELERATE: f64 = 4.0;
 pub const SNAKE_SKIN_COLOR_RANGE: i32 = 255;
 pub const SNAKE_ROTATE_SPEED: f64 = 5.0;
 pub const SNAKE_NODE_SPACE: f64 = 0.0;
@@ -32,7 +27,7 @@ pub const TRUE_MAP_WIDTH: f64 = 3200.0;
 pub const TRUE_MAP_HEIGHT: f64 = 3200.0;
 
 // GAME
-pub const GAME_LOOP_DELAY: i32 = 10;
+pub const GAME_LOOP_DELAY: i32 = 50;
 pub const SERVER_IP: &str = "0.0.0.0";
 pub const SERVER_PORT: u16 = 5000;
 pub const SERVER_CURRENT_UPDATE_PLAYER_METHOD: i32 = 2;
