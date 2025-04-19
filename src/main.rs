@@ -1,5 +1,7 @@
 mod player;
 mod bait;
+pub mod constants;
+
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{net::UdpSocket, sync::Mutex, time::{self, Duration}};
