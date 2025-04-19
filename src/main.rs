@@ -1,6 +1,8 @@
 mod bait;
+mod collision;
 pub mod constants;
 mod player;
+
 
 use std::{
     collections::HashMap,
@@ -8,6 +10,7 @@ use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
+
 use tokio::{
     net::UdpSocket,
     sync::Mutex,
@@ -16,7 +19,44 @@ use tokio::{
 
 use crate::bait::Bait;
 use crate::player::{Player, snake::Snake};
+use collision::{Rect, rect_intersect};
 use constants::*;
+
+// Generate a random bait
+pub fn generate_bait(low: f64, high: f64) -> Bait {
+    let x = rand::random_range(low..high);
+    let y = rand::random_range(low..high);
+
+    let color = format!("{}", rand::random_range(0..MAX_BAIT_COLOR_RANGE));
+    let size = rand::random_range(0.0..MAX_BAIT_SIZE as f64);
+    Bait::new(x, y, color, size)
+}
+
+// Generate mass baits based on a dead snake
+pub fn generate_mass_bait(snake: &Snake) -> Vec<bait::Bait> {
+    let mut new_bait_arr = Vec::new();
+    let color = rand::random_range(0..MAX_BAIT_COLOR_RANGE).to_string();
+
+    for i in (0..snake.nodes.len()).step_by(2) {
+        if i >= snake.nodes.len() - 1 {
+            break;
+        }
+
+        let offset_x = rand::random_range(-5.0..5.0);
+        let offset_y = rand::random_range(-5.0..5.0);
+
+        let new_bait = Bait::new(
+            snake.nodes[i].x + offset_x,
+            snake.nodes[i].y + offset_y,
+            color.clone(),
+            MAX_BAITS_SIZE_ON_DEAD as f64,
+        );
+
+        new_bait_arr.push(new_bait);
+    }
+
+    new_bait_arr
+}
 
 /// Main game server struct
 struct GameServer {
@@ -141,18 +181,324 @@ impl GameServer {
         let mut interval = time::interval(Duration::from_millis(10));
         loop {
             interval.tick().await;
-            let players_lock = self.players.lock().await;
+            let mut new_bait_arr = Vec::new();
+
+            let mut cur_bait = self.baits.lock().await;
+            let mut msg_new_bait_arr = String::new();
+            let mut dead_players = Vec::new();
+
+            if cur_bait.len() < MAX_BAITS as usize {
+                let initial_bait = generate_bait(OFFSET_X + 10.0, TRUE_MAP_WIDTH - 10.0);
+                let cl = initial_bait.clone();
+                new_bait_arr.push(initial_bait);
+                cur_bait.push(cl);
+            }
+
+            // Update all player positions
+            let mut players_lock = self.players.lock().await;
+            for player in players_lock.values_mut() {
+                let move_x = player.move_x;
+                let move_y = player.move_y;
+                let window_w = player.window_w;
+                let window_h = player.window_h;
+                let plr_snake = player.get_snake();
+                if plr_snake.accelerate && plr_snake.nodes.len() > SNAKE_INITIAL_LENGTH {
+                    if plr_snake.accelerate_time < SNAKE_IT_IS_TIME_TO_SHORTER {
+                        plr_snake.accelerate_time += 1;
+                    } else {
+                        plr_snake.accelerate_time = 0;
+
+                        let last_node = &plr_snake.nodes[plr_snake.nodes.len() - 1];
+                        let new_bait = Bait::new(
+                            last_node.x,
+                            last_node.y,
+                            format!("{}", rand::random_range(0..MAX_BAIT_COLOR_RANGE)),
+                            5.0,
+                        );
+                        let cl = new_bait.clone();
+                        cur_bait.push(new_bait);
+                        new_bait_arr.push(cl);
+
+                        // Remove the last node (make snake shorter)
+                        plr_snake.shorter();
+                    }
+                }
+
+                plr_snake.move_snake(move_x, move_y, window_w as f64, window_h as f64);
+            }
+
             for player in players_lock.values() {
-                // Prepare your game state packet here
-                let packet = b"game state update";
-                if let Err(e) = self.socket.send_to(packet, player.addr).await {
-                    eprintln!("Failed to send to {}: {}", player.addr, e);
+                // If player is already dead, skip
+                if dead_players.contains(&player.id) {
+                    continue;
+                }
+
+                // Check against all other players
+                for other_player in players_lock.values() {
+                    if other_player == player {
+                        continue; // A player cannot hit itself
+                    }
+
+                    let player_j_head = Rect {
+                        top: other_player.snake.nodes[0].y - SNAKE_INITIAL_SIZE / 3.0,
+                        left: other_player.snake.nodes[0].x - SNAKE_INITIAL_SIZE / 3.0,
+                        right: other_player.snake.nodes[0].x + SNAKE_INITIAL_SIZE / 3.0,
+                        bottom: other_player.snake.nodes[0].y + SNAKE_INITIAL_SIZE / 3.0,
+                    };
+
+                    // Check collision with each node of player i
+                    let mut hit = false;
+                    for k in 0..player.snake.nodes.len() {
+                        let player_i_node = Rect {
+                            top: player.snake.nodes[k].y - SNAKE_INITIAL_SIZE / 3.0,
+                            left: player.snake.nodes[k].x - SNAKE_INITIAL_SIZE / 3.0,
+                            right: player.snake.nodes[k].x + SNAKE_INITIAL_SIZE / 3.0,
+                            bottom: player.snake.nodes[k].y + SNAKE_INITIAL_SIZE / 3.0,
+                        };
+
+                        if rect_intersect(&player_i_node, &player_j_head) {
+                            hit = true;
+
+                            // Generate baits from dead snake
+                            let new_bait_on_dead = generate_mass_bait(&other_player.snake);
+                            for bait in new_bait_on_dead {
+                                let bt_c = bait.clone();
+                                new_bait_arr.push(bait);
+                                cur_bait.push(bt_c);
+                            }
+
+                            dead_players.push(other_player.id);
+
+                            // Notify player about death
+                            let death_msg = format!("{}8", COMM_START_NEW_MESS);
+                            if let Err(e) = self
+                                .socket
+                                .send_to(death_msg.as_bytes(), other_player.addr)
+                                .await
+                            {
+                                eprintln!("Failed to send welcome to {}: {}", other_player.addr, e);
+                            }
+
+                            break;
+                        }
+                    }
+
+                    if hit {
+                        break;
+                    }
+                }
+            }
+
+            // Inform all remaining players about dead players
+            let mut msg_dead_players = String::new();
+            for &dead_id in &dead_players {
+                msg_dead_players.push_str(&format!("{}7,{}", COMM_START_NEW_MESS, dead_id));
+            }
+
+            // Send death notifications to all players
+            if !msg_dead_players.is_empty() {
+                for player in players_lock.values() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_dead_players.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+            }
+
+            // Send new baits to all players
+            if !msg_new_bait_arr.is_empty() {
+                for player in players_lock.values() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_new_bait_arr.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+            }
+
+            // Check if a player eats a bait
+            let bt_lk = self.baits.lock().await;
+            let bait_key = &bt_lk.iter().enumerate();
+            let mut deleted_baits = Vec::new();
+            let mut msg_grown_players = String::new();
+
+            for player in players_lock.values_mut() {
+                let plr_id = player.id;
+                let player_i_head = Rect {
+                    top: player.snake.nodes[0].y - SNAKE_INITIAL_SIZE / 2.0,
+                    left: player.snake.nodes[0].x - SNAKE_INITIAL_SIZE / 2.0,
+                    right: player.snake.nodes[0].x + SNAKE_INITIAL_SIZE / 2.0,
+                    bottom: player.snake.nodes[0].y + SNAKE_INITIAL_SIZE / 2.0,
+                };
+                let bk = bait_key.clone();
+                for (idx, bait_tmp) in bk {
+                    let bait_rect = Rect {
+                        top: bait_tmp.y - bait_tmp.size / 2.0,
+                        left: bait_tmp.x - bait_tmp.size / 2.0,
+                        right: bait_tmp.x + bait_tmp.size / 2.0,
+                        bottom: bait_tmp.y + bait_tmp.size / 2.0,
+                    };
+
+                    if rect_intersect(&player_i_head, &bait_rect) {
+                        // Grow the snake
+                        player.grow_player_snake();
+                        msg_grown_players
+                            .push_str(&format!("{}62,{}", COMM_START_NEW_MESS, plr_id));
+                        self.baits.lock().await.remove(idx);
+                        // bait::destroy(j);
+                        deleted_baits.push(bait_tmp);
+                    }
+                }
+            }
+            // Inform players about deleted baits
+            let mut msg_deleted_baits = String::new();
+            for bait in &deleted_baits {
+                msg_deleted_baits
+                    .push_str(&format!("{}4,{},{}", COMM_START_NEW_MESS, bait.x, bait.y));
+            }
+
+            // Send bait deletion and growth notifications
+            for player in players_lock.values_mut() {
+                if !msg_deleted_baits.is_empty() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_deleted_baits.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+
+                if !msg_grown_players.is_empty() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_grown_players.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+            }
+
+            for player in players_lock.values_mut() {
+                let mut msg_update_player = format!("{}2,", COMM_START_NEW_MESS);
+
+                for (j, node) in player.snake.nodes.iter().enumerate() {
+                    msg_update_player.push_str(&format!("{:.4},{:.4}", node.x, node.y));
+                    if j < player.snake.nodes.len() - 1 {
+                        msg_update_player.push(',');
+                    }
+                }
+                if let Err(e) = self
+                    .socket
+                    .send_to(msg_update_player.as_bytes(), player.addr)
+                    .await
+                {
+                    eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                }
+            }
+
+            for player in players_lock.values() {
+                let mut msg_update_enemies_position = String::new();
+
+                for other_player in players_lock.values() {
+                    if player == other_player {
+                        continue;
+                    }
+
+                    msg_update_enemies_position
+                        .push_str(&format!("{}6,{},", COMM_START_NEW_MESS, other_player.id));
+
+                    for (k, node) in other_player.snake.nodes.iter().enumerate() {
+                        msg_update_enemies_position
+                            .push_str(&format!("{:.4},{:.4}", node.x, node.y));
+                        if k < other_player.snake.nodes.len() - 1 {
+                            msg_update_enemies_position.push(',');
+                        }
+                    }
+                }
+
+                if !msg_update_enemies_position.is_empty() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_update_enemies_position.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+            }
+
+            for bait in &new_bait_arr {
+                msg_new_bait_arr.push_str(&format!(
+                    "{}3,{},{},{}",
+                    COMM_START_NEW_MESS, bait.x, bait.y, bait.size
+                ));
+            }
+            if !msg_new_bait_arr.is_empty() {
+                for player in players_lock.values() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_new_bait_arr.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+            }
+
+            // Clean up inactive players (UDP connection management)
+            let inactive_players = self.clean_inactive_players(30).await; // 30 seconds timeout
+            for id in inactive_players {
+                println!("Player {} disconnected due to inactivity", id);
+                let msg = format!("{}7,{}", COMM_START_NEW_MESS, id);
+
+                // Notify remaining players
+                for player in players_lock.values() {
+                    if player.addr != id {
+                        if let Err(e) = self
+                            .socket
+                            .send_to(msg.clone().as_bytes(), player.addr)
+                            .await
+                        {
+                            eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                        }
+                    }
                 }
             }
         }
     }
 
+    // Remove players that haven't been seen in a while (UDP connection management)
+    pub async fn clean_inactive_players(&self, timeout_secs: u64) -> Vec<SocketAddr> {
+        let mut inactive_ids = Vec::new();
+        let mut plr = self.players.lock().await;
+        let players = plr.clone().into_iter();
+
+        for (i, player) in players {
+            let elapsed = player.last_seen.elapsed().as_secs();
+            if elapsed > timeout_secs {
+                inactive_ids.push(i);
+            }
+        }
+
+        // Remove inactive players
+        for id in &inactive_ids {
+            // if *id < players.len() {
+            //     players[*id] = None;
+            // }
+            plr.remove(id);
+        }
+
+        inactive_ids
+    }
     /// Handle creation of a new player
+
     async fn create_player(&self, addr: SocketAddr) -> Player {
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -210,6 +556,7 @@ impl GameServer {
                     }
                 }
             }
+
         }
 
         if !data.is_empty() {

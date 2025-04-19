@@ -1,5 +1,3 @@
-use crate::constants::*;
-
 pub struct Bait {
     pub x: f64,
     pub y: f64,
@@ -7,15 +5,9 @@ pub struct Bait {
     pub size: f64,
 }
 
-
-impl  Bait {
+impl Bait {
     pub fn new(x: f64, y: f64, color: String, size: f64) -> Bait {
-        let new_bait = Bait {
-            x,
-            y,
-            color,
-            size,
-        };
+        let new_bait = Bait { x, y, color, size };
         new_bait
     }
 }
@@ -29,4 +21,5 @@ impl Clone for Bait {
             size: self.size,
         }
     }
-} 
+}
+
