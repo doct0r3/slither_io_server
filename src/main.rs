@@ -13,7 +13,7 @@ use std::{
 
 use tokio::{
     net::UdpSocket,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
     time::{self, Duration},
 };
 
@@ -89,12 +89,11 @@ impl GameServer {
                         let data = &buf[..len];
                         let mut players_lock = players.lock().await;
                         if !players_lock.contains_key(&addr) {
-                            let lk1 = players_lock.clone();
+                            // let lk1 = players_lock.clone();
                             // New player
-                            let plr = self.create_player(addr, lk1).await;
+                            self.create_player(addr, players_lock).await;
                             // Player::new(name, snake, addr)
                             println!("New player from {}", addr);
-                            players_lock.insert(addr, plr);
                         } else {
                             let lk2 = players_lock.clone();
 
@@ -502,7 +501,7 @@ impl GameServer {
     }
     /// Handle creation of a new player
 
-    async fn create_player(&self, addr: SocketAddr, players_lock: HashMap<SocketAddr, Player>) -> Player {
+    async fn create_player(&self, addr: SocketAddr, mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -586,7 +585,7 @@ impl GameServer {
         }
 
         println!("Total player(s): {}", players_lock.len());
-        new_player
+        players_lock.insert(addr, new_player);
     }
 }
 
