@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
-use crate::game::constants::*;
+use crate::constants::*;
 
 pub struct Bait {
     pub x: f64,
