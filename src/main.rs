@@ -1,20 +1,23 @@
-mod player;
 mod bait;
 pub mod constants;
+mod player;
 
+use std::{collections::HashMap, io::Read, net::SocketAddr, sync::Arc};
+use tokio::{
+    net::UdpSocket,
+    sync::Mutex,
+    time::{self, Duration},
+};
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use tokio::{net::UdpSocket, sync::Mutex, time::{self, Duration}};
-
-use crate::player::{Player,snake::Snake};
 use crate::bait::Bait;
-
+use crate::player::{Player, snake::Snake};
+use constants::*;
 
 /// Main game server struct
 struct GameServer {
     socket: Arc<UdpSocket>,
     players: Arc<Mutex<HashMap<SocketAddr, Player>>>,
-    baits: Arc<Mutex<Vec<Bait>>>
+    baits: Arc<Mutex<Vec<Bait>>>,
 }
 
 impl GameServer {
@@ -45,10 +48,10 @@ impl GameServer {
                             println!("New player from {}", addr);
                             let player = Player { addr };
                             players_lock.insert(addr, player);
-                            create_player(&socket, addr, data).await;
+                            create_player(addr, data).await;
                         } else {
                             // Existing player
-                            handle_command(&socket, addr, data).await;
+                            handle_command(addr, data).await;
                         }
                     }
                     Err(e) => {
@@ -57,6 +60,75 @@ impl GameServer {
                 }
             }
         });
+    }
+
+    /// Handle incoming commands from existing players
+    async fn handle_command(&mut self, addr: SocketAddr, data: &[u8]) {
+        let message = String::from_utf8_lossy(data);
+        let splitted: Vec<&str> = message.split(',').collect();
+
+        if splitted.is_empty() {
+            return;
+        }
+
+        println!("{}", message);
+        let mut lk = self.players.lock().await;
+
+        // Try to find the player by address
+        let player_id_opt = lk.get_mut(&addr);
+        // println!("{}", player_id_opt.unwrap_or(0));
+
+        match splitted[0] {
+            "2" => {
+                // Update player's mouse position
+                if let Some(player_id) = player_id_opt {
+                    if splitted.len() >= 5 {
+                        player_id.update_xy(
+                            splitted[1].parse().unwrap_or(0.0),
+                            splitted[2].parse().unwrap_or(0.0),
+                            splitted[3].parse().unwrap_or(0),
+                            splitted[4].parse().unwrap_or(0),
+                        );
+                    }
+                }
+            }
+            "9" => {
+                // Player sends their name to all other players
+                if let Some(player) = player_id_opt {
+                    if splitted.len() >= 2 {
+                        let name = splitted[1].to_string();
+
+                        // Update the player's name
+                        player.update_player_name(name.clone());
+
+                        // Notify all other players
+                        let msg_enemy_name =
+                            format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
+
+                        for &i in self.players.lock().await.keys() {
+                            if i != player.addr {
+                                self.socket.send_to(msg_enemy_name.clone().as_bytes(), i);
+                            }
+                        }
+                    }
+                }
+            }
+            "10" => {
+                // Player is accelerating
+                if let Some(player_id) = player_id_opt {
+                    player_id.update_player_acceleration(true);
+                };
+            }
+            "11" => {
+                // Player stops accelerating
+                if let Some(player_id) = player_id_opt {
+                    player_id.update_player_acceleration(false);
+                };
+            }
+            _ => {
+                println!("Inrecognized Command");
+            }
+        }
     }
 
     /// Game loop: sends updates to all clients every 10 ms
@@ -74,25 +146,15 @@ impl GameServer {
             }
         }
     }
-}
 
-/// Handle creation of a new player
-async fn create_player(socket: &UdpSocket, addr: SocketAddr, data: &[u8]) {
-    // Parse initial data, send welcome or initial state
-    println!("Creating player {}: {:?}", addr, data);
-    let welcome = b"Welcome to the game!";
-    if let Err(e) = socket.send_to(welcome, addr).await {
-        eprintln!("Failed to send welcome to {}: {}", addr, e);
-    }
-}
-
-/// Handle incoming commands from existing players
-async fn handle_command(socket: &UdpSocket, addr: SocketAddr, data: &[u8]) {
-    // Parse command and update player state
-    println!("Received command from {}: {:?}", addr, data);
-    // Echo back or process accordingly
-    if let Err(e) = socket.send_to(b"Command received", addr).await {
-        eprintln!("Failed to acknowledge {}: {}", addr, e);
+    /// Handle creation of a new player
+    async fn create_player(&mut self, addr: SocketAddr, data: &[u8]) {
+        // Parse initial data, send welcome or initial state
+        println!("Creating player {}: {:?}", addr, data);
+        let welcome = b"Welcome to the game!";
+        if let Err(e) = self.socket.send_to(welcome, addr).await {
+            eprintln!("Failed to send welcome to {}: {}", addr, e);
+        }
     }
 }
 
@@ -108,7 +170,9 @@ async fn main() -> tokio::io::Result<()> {
     let game_handle = tokio::spawn(server.clone().game_loop());
 
     // Wait for Ctrl-C to shut down
-    tokio::signal::ctrl_c().await.expect("failed to listen for ctrl-c");
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to listen for ctrl-c");
     println!("Shutting down server...");
 
     // Stop the game loop

@@ -1,12 +1,13 @@
 pub mod snake;
 
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Instant,SystemTime, UNIX_EPOCH};
 
 use snake::Snake;
 // Import the real Snake type from our snake module
 
 pub struct Player {
+    pub id: u128,
     pub name: String,
     pub snake: Snake,
     pub addr: SocketAddr,
@@ -20,6 +21,7 @@ pub struct Player {
 impl Player {
     pub fn new(name: String, snake: Snake, addr: SocketAddr) -> Player {
         Player {
+            id: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
             name,
             snake,
             addr,
@@ -31,9 +33,11 @@ impl Player {
         }
     }
 
-    pub fn update_xy(&mut self, x: f64, y: f64) {
+    pub fn update_xy(&mut self, x: f64, y: f64, win_w: u32, win_h: u32) {
         self.move_x = x;
         self.move_y = y;
+        self.window_h = win_h;
+        self.window_w = win_w;
     }
 
     pub fn update_last_seen(&mut self) {
@@ -44,7 +48,7 @@ impl Player {
         self.name = name;
     }
 
-    pub fn update_player_acceleration(&mut self,accelerate: bool) {
+    pub fn update_player_acceleration(&mut self, accelerate: bool) {
         self.snake.accelerate = accelerate;
     }
 
@@ -55,7 +59,6 @@ impl Player {
     pub fn grow_player_snake(&mut self) {
         self.snake.grow();
     }
-
 }
 
 // Implement Clone for Player
@@ -64,6 +67,7 @@ impl Clone for Player {
         // Note: Cloning TcpStream isn't generally recommended
         // This is a simplified implementation for illustration
         Player {
+            id: self.id,
             name: self.name.clone(),
             snake: self.snake.clone(),
             addr: self.addr,
