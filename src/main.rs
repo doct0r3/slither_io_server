@@ -14,6 +14,7 @@ use crate::bait::Bait;
 struct GameServer {
     socket: Arc<UdpSocket>,
     players: Arc<Mutex<HashMap<SocketAddr, Player>>>,
+    baits: Arc<Mutex<Vec<Bait>>>
 }
 
 impl GameServer {
@@ -23,6 +24,7 @@ impl GameServer {
         Ok(Self {
             socket: Arc::new(socket),
             players: Arc::new(Mutex::new(HashMap::new())),
+            baits: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
