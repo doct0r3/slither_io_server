@@ -13,7 +13,7 @@ use std::{
 
 use tokio::{
     net::UdpSocket,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
     time::{self, Duration},
 };
 
@@ -90,13 +90,13 @@ impl GameServer {
                         let mut players_lock = players.lock().await;
                         if !players_lock.contains_key(&addr) {
                             // New player
-                            let plr = self.create_player(addr).await;
+                            let plr = self.create_player(addr, players_lock).await;
                             // Player::new(name, snake, addr)
                             println!("New player from {}", addr);
                             players_lock.insert(addr, plr);
                         } else {
                             // Existing player
-                            self.handle_command(addr, data).await;
+                            self.handle_command(addr, data, players_lock).await;
                         }
                     }
                     Err(e) => {
@@ -108,7 +108,7 @@ impl GameServer {
     }
 
     /// Handle incoming commands from existing players
-    async fn handle_command(&self, addr: SocketAddr, data: &[u8]) {
+    async fn handle_command(&self, addr: SocketAddr, data: &[u8], players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
         let message = String::from_utf8_lossy(data);
         let splitted: Vec<&str> = message.split(',').collect();
 
@@ -117,7 +117,7 @@ impl GameServer {
         }
 
         println!("{}", message);
-        let mut lk = self.players.lock().await;
+        let mut lk = players_lock;
 
         // Try to find the player by address
         let player_id_opt = lk.get_mut(&addr);
@@ -150,7 +150,7 @@ impl GameServer {
                         let msg_enemy_name =
                             format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
 
-                        for &i in self.players.lock().await.keys() {
+                        for &i in players_lock.keys() {
                             if i != player.addr {
                                 self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
                             }
@@ -322,7 +322,7 @@ impl GameServer {
             }
 
             // Check if a player eats a bait
-            let bt_lk = self.baits.lock().await;
+            let bt_lk = cur_bait;
             let bait_key = &bt_lk.iter().enumerate();
             let mut deleted_baits = Vec::new();
             let mut msg_grown_players = String::new();
@@ -349,7 +349,7 @@ impl GameServer {
                         player.grow_player_snake();
                         msg_grown_players
                             .push_str(&format!("{}62,{}", COMM_START_NEW_MESS, plr_id));
-                        self.baits.lock().await.remove(idx);
+                        cur_bait.remove(idx);
                         // bait::destroy(j);
                         deleted_baits.push(bait_tmp);
                     }
@@ -453,7 +453,7 @@ impl GameServer {
             }
 
             // Clean up inactive players (UDP connection management)
-            let inactive_players = self.clean_inactive_players(30).await; // 30 seconds timeout
+            let inactive_players = self.clean_inactive_players(30, players_lock).await; // 30 seconds timeout
             for id in inactive_players {
                 println!("Player {} disconnected due to inactivity", id);
                 let msg = format!("{}7,{}", COMM_START_NEW_MESS, id);
@@ -475,9 +475,9 @@ impl GameServer {
     }
 
     // Remove players that haven't been seen in a while (UDP connection management)
-    pub async fn clean_inactive_players(&self, timeout_secs: u64) -> Vec<SocketAddr> {
+    pub async fn clean_inactive_players(&self, timeout_secs: u64, players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) -> Vec<SocketAddr> {
         let mut inactive_ids = Vec::new();
-        let mut plr = self.players.lock().await;
+        let mut plr = players_lock;
         let players = plr.clone().into_iter();
 
         for (i, player) in players {
@@ -499,7 +499,7 @@ impl GameServer {
     }
     /// Handle creation of a new player
 
-    async fn create_player(&self, addr: SocketAddr) -> Player {
+    async fn create_player(&self, addr: SocketAddr, players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) -> Player {
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -541,7 +541,7 @@ impl GameServer {
         // Send all other players to this new player
         let mut data = String::new();
 
-        for other_player in self.players.lock().await.values() {
+        for other_player in players_lock.values() {
             if other_player.addr != new_player.addr {
                 data.push_str(&format!(
                     "{}{}{}",
@@ -564,7 +564,7 @@ impl GameServer {
         }
 
         // Send new player to all other players
-        for other_player in self.players.lock().await.values() {
+        for other_player in players_lock.values() {
             if other_player.addr != new_player.addr {
                 self.socket.send_to(full_enemy_msg.clone().as_bytes(), addr).await.unwrap();
             }
@@ -582,7 +582,7 @@ impl GameServer {
 
         }
 
-        println!("Total player(s): {}", self.players.lock().await.len());
+        println!("Total player(s): {}", players_lock.len());
         new_player
     }
 }

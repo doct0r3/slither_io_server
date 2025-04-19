@@ -1,0 +1,47 @@
+延迟补偿： 客户端预测 + 服务器回滚 解决网络抖动
+
+反作弊： 服务器校验物理逻辑（如移动速度是否合法）
+
+client send -> "mouse position" && "if accelerate"
+
+server send -> "baits" && "snakes' node" && "player..." ...
+
+server handle -> move && dead && eat && accelerate
+
+??
+GameState {
+    // fill
+    move_x,
+    move_y,
+    accelerate,
+}
+
+cause -> snake move
+
+Return {
+    snake.nodes[]
+    baits
+}
+
+1 {2, 0, 0, 1280, 720}
+2 {2, 0, 1, 1280, 720}
+3 {2, 1, 1, 1280, 720}
+4 {2, 2, 1, 1280, 720}
+5 null                  {2, 2, 2, 1280, 720}
+6 null                  {2, 2, 3, 1280, 720}
+7 null                  {2, 3, 3, 1280, 720}
+8 {2, 3, 4, 1280, 720} -> {2, ?, ?, 1280, 720}
+
+
+
+
+server_side(aiming for every each client):
+
+socket.recv_from(data, addr) -> (data, addr)
+
+handle(data)
+
+
+
+
+client_side:
