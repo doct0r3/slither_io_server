@@ -1,7 +1,7 @@
 pub mod snake;
 
 use std::net::SocketAddr;
-use std::time::{Instant,SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use snake::Snake;
 // Import the real Snake type from our snake module
@@ -19,9 +19,9 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new(name: String, snake: Snake, addr: SocketAddr) -> Player {
+    pub fn new(id: u128, name: String, snake: Snake, addr: SocketAddr) -> Player {
         Player {
-            id: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+            id,
             name,
             snake,
             addr,
