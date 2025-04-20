@@ -98,10 +98,12 @@ impl GameServer {
                     Ok((len, addr)) => {
                         let data = &buf[..len];
                         let mut players_lock = players.lock().await;
-                        if !players_lock.contains_key(&addr) {
+                        if !players_lock.contains_key(&addr)
+                            && String::from_utf8_lossy(data).contains("9")
+                        {
                             // let lk1 = players_lock.clone();
                             // New player
-                            self.create_player(addr, players_lock).await;
+                            self.create_player(addr, data, players_lock).await;
                             // Player::new(name, snake, addr)
                             println!("New player from {}", addr);
                         } else {
@@ -202,7 +204,7 @@ impl GameServer {
                 };
             }
             d => {
-                println!("Inrecognized Command:{}",d);
+                println!("Inrecognized Command:{}", d);
             }
         }
     }
@@ -529,7 +531,8 @@ impl GameServer {
                 if (((plr.sent_pkt as f64 / server_recv as f64)
                     + (server_send as f64 / plr.recv_pkt as f64))
                     / 2.0
-                    < 0.98) && plr.sent_pkt > 200
+                    < 0.98)
+                    && plr.sent_pkt > 200
                 {
                     loss_players.push(plr.addr);
                 }
@@ -619,8 +622,12 @@ impl GameServer {
     async fn create_player(
         &self,
         addr: SocketAddr,
+        data: &[u8],
         mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>,
     ) {
+        let message = String::from_utf8_lossy(data);
+        let splitted: Vec<&str> = message.split(',').collect();
+
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -635,7 +642,7 @@ impl GameServer {
         );
 
         // Create the player
-        let new_player = Player::new(player_id, "Unnamed".to_string(), player_snake.clone(), addr);
+        let  mut new_player = Player::new(player_id, "Unnamed".to_string(), player_snake.clone(), addr);
 
         // Send first snake back to the client
         let mut msg = format!("{}1,", COMM_START_NEW_MESS);
@@ -648,8 +655,30 @@ impl GameServer {
 
         self.socket.send_to(msg.as_bytes(), addr).await.unwrap();
 
+        // Player sends their name to all other players
+
+        if splitted.len() >= 2 {
+            let name = splitted[1].to_string();
+
+            // Update the player's name
+            new_player.update_player_name(name.clone());
+
+            // Notify all other players
+            let msg_enemy_name =
+                format!("{}{},{},{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, new_player.id, new_player.name);
+
+            for &i in players_lock.keys() {
+                if i != new_player.addr {
+                    self.socket
+                        .send_to(msg_enemy_name.clone().as_bytes(), i)
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+
         // Prepare new enemy message for other players
-        let new_enemy_msg = format!("{}5,{},Unnamed,", COMM_START_NEW_MESS, player_id);
+        let new_enemy_msg = format!("{}5,{},{},", COMM_START_NEW_MESS, player_id, new_player.name);
 
         let mut full_enemy_msg = new_enemy_msg;
         for (i, node) in player_snake.nodes.iter().enumerate() {
