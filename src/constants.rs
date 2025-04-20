@@ -27,7 +27,7 @@ pub const TRUE_MAP_WIDTH: f64 = 3200.0;
 pub const TRUE_MAP_HEIGHT: f64 = 3200.0;
 
 // GAME
-pub const GAME_LOOP_DELAY: i32 = 50;
+pub const GAME_LOOP_DELAY: i32 = 80;
 pub const SERVER_IP: &str = "0.0.0.0";
 pub const SERVER_PORT: u16 = 5000;
 pub const SERVER_CURRENT_UPDATE_PLAYER_METHOD: i32 = 2;

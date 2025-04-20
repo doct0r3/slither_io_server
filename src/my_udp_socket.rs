@@ -1,9 +1,15 @@
-use std::io;
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::net::{UdpSocket, ToSocketAddrs};
+use std::{
+    collections::HashMap,
+    io,
+    net::SocketAddr,
+    sync::atomic::{AtomicUsize, Ordering},
+    sync::Arc,
+};
+use tokio::{
+    net::{ToSocketAddrs, UdpSocket},
+    sync::Mutex,
+};
 
-/// UDP 收发包统计信息
 #[derive(Debug)]
 pub struct UdpStats {
     sent_packets: AtomicUsize,
@@ -41,44 +47,80 @@ impl UdpStats {
     }
 }
 
-/// 封装了统计功能的 UDP Socket
+/// A UDP socket that tracks per‐peer send/recv stats.
+#[derive(Clone)]
 pub struct MyUdpSocket {
-    socket: UdpSocket,
-    stats: UdpStats,
+    socket: Arc<UdpSocket>,
+    stats: Arc<Mutex<HashMap<SocketAddr, UdpStats>>>,
 }
 
 impl MyUdpSocket {
-    /// 绑定到指定地址，创建 UDP Socket
+    /// Bind once to a local address.
     pub async fn bind<A: ToSocketAddrs>(addr: A) -> io::Result<Self> {
         let socket = UdpSocket::bind(addr).await?;
         Ok(Self {
-            socket,
-            stats: UdpStats::default(),
+            socket: Arc::new(socket),
+            stats: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
-    /// 接收数据并记录统计信息
+    /// Receive a datagram and update the stats for the peer addr.
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         let result = self.socket.recv_from(buf).await;
-        if let Ok((size, _)) = &result {
-            self.stats.received_packets.fetch_add(1, Ordering::Relaxed);
-            self.stats.received_bytes.fetch_add(*size, Ordering::Relaxed);
+        if let Ok((size, peer)) = &result {
+            let mut map = self.stats.lock().await;
+            let entry = map.entry(*peer).or_insert_with(UdpStats::default);
+            entry.received_packets.fetch_add(1, Ordering::Relaxed);
+            entry.received_bytes.fetch_add(*size, Ordering::Relaxed);
         }
         result
     }
 
-    /// 发送数据并记录统计信息
-    pub async fn send_to<A: ToSocketAddrs>(&self, buf: &[u8], addr: A) -> io::Result<usize> {
-        let result = self.socket.send_to(buf, addr).await;
+    /// Send a datagram to *this* peer and update its stats.
+    pub async fn send_to(&self, buf: &[u8], peer: SocketAddr) -> io::Result<usize> {
+        let result = self.socket.send_to(buf, peer).await;
         if let Ok(size) = &result {
-            self.stats.sent_packets.fetch_add(1, Ordering::Relaxed);
-            self.stats.sent_bytes.fetch_add(*size, Ordering::Relaxed);
+            let mut map = self.stats.lock().await;
+            let entry = map.entry(peer).or_insert_with(UdpStats::default);
+            entry.sent_packets.fetch_add(1, Ordering::Relaxed);
+            entry.sent_bytes.fetch_add(*size, Ordering::Relaxed);
         }
         result
     }
 
-    /// 获取统计信息引用
-    pub fn stats(&self) -> &UdpStats {
-        &self.stats
+    /// Get a snapshot of all per‐peer stats as `(sent_pkts, sent_bytes, recv_pkts, recv_bytes)`.
+    pub async fn get_stats(
+        &self,
+    ) -> HashMap<SocketAddr, (usize, usize, usize, usize)> {
+        let map = self.stats.lock().await;
+        map.iter()
+            .map(|(peer, stat)| {
+                (
+                    *peer,
+                    (
+                        stat.sent_packets(),
+                        stat.sent_bytes(),
+                        stat.received_packets(),
+                        stat.received_bytes(),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// Convenience: get stats for one specific peer, if any.
+    pub async fn stats_for(
+        &self,
+        peer: &SocketAddr,
+    ) -> Option<(usize, usize, usize, usize)> {
+        let map = self.stats.lock().await;
+        map.get(peer).map(|stat| {
+            (
+                stat.sent_packets(),
+                stat.sent_bytes(),
+                stat.received_packets(),
+                stat.received_bytes(),
+            )
+        })
     }
 }

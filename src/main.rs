@@ -27,7 +27,12 @@ pub fn generate_bait(low: f64, high: f64) -> Bait {
     let x = rand::random_range(low..high);
     let y = rand::random_range(low..high);
 
-    let color = format!("{}", rand::random_range(0..MAX_BAIT_COLOR_RANGE));
+    let color = format!(
+        "{},{},{}",
+        rand::random_range(0..MAX_BAIT_COLOR_RANGE),
+        rand::random_range(0..MAX_BAIT_COLOR_RANGE),
+        rand::random_range(0..MAX_BAIT_COLOR_RANGE)
+    );
     let size = rand::random_range(0.0..MAX_BAIT_SIZE as f64);
     Bait::new(x, y, color, size)
 }
@@ -35,7 +40,12 @@ pub fn generate_bait(low: f64, high: f64) -> Bait {
 // Generate mass baits based on a dead snake
 pub fn generate_mass_bait(snake: &Snake) -> Vec<bait::Bait> {
     let mut new_bait_arr = Vec::new();
-    let color = rand::random_range(0..MAX_BAIT_COLOR_RANGE).to_string();
+    let color = format!(
+        "{},{},{}",
+        rand::random_range(0..MAX_BAIT_COLOR_RANGE),
+        rand::random_range(0..MAX_BAIT_COLOR_RANGE),
+        rand::random_range(0..MAX_BAIT_COLOR_RANGE)
+    );
 
     for i in (0..snake.nodes.len()).step_by(2) {
         if i >= snake.nodes.len() - 1 {
@@ -123,7 +133,7 @@ impl GameServer {
             return;
         }
 
-        println!("{}", message);
+        // println!("{}", message);
         let lk = players_lock.clone();
 
         // Try to find the player by address
@@ -191,8 +201,8 @@ impl GameServer {
                     println!("received pkt report");
                 };
             }
-            _ => {
-                println!("Inrecognized Command");
+            d => {
+                println!("Inrecognized Command:{}",d);
             }
         }
     }
@@ -203,11 +213,6 @@ impl GameServer {
         let mut interval = time::interval(Duration::from_millis(GAME_LOOP_DELAY as u64));
 
         loop {
-            // println!(
-            //     "Send:{},Recv:{}",
-            //     self.socket.stats().sent_packets(),
-            //     self.socket.stats().received_packets()
-            // );
             interval.tick().await;
             let baits_c = Arc::clone(&self.baits);
             let player_c = Arc::clone(&self.players);
@@ -243,7 +248,12 @@ impl GameServer {
                         let new_bait = Bait::new(
                             last_node.x,
                             last_node.y,
-                            format!("{}", rand::random_range(0..MAX_BAIT_COLOR_RANGE)),
+                            format!(
+                                "{},{},{}",
+                                rand::random_range(0..MAX_BAIT_COLOR_RANGE),
+                                rand::random_range(0..MAX_BAIT_COLOR_RANGE),
+                                rand::random_range(0..MAX_BAIT_COLOR_RANGE)
+                            ),
                             5.0,
                         );
                         let cl = new_bait.clone();
@@ -468,8 +478,8 @@ impl GameServer {
 
             for bait in &new_bait_arr {
                 msg_new_bait_arr.push_str(&format!(
-                    "{}3,{},{},{}",
-                    COMM_START_NEW_MESS, bait.x, bait.y, bait.size
+                    "{}3,{},{},{},{},",
+                    COMM_START_NEW_MESS, bait.x, bait.y, bait.size, bait.color
                 ));
             }
             if !msg_new_bait_arr.is_empty() {
@@ -510,8 +520,20 @@ impl GameServer {
                 players_lock.remove(&ina);
             }
 
-            // Clean up inactive players (UDP connection management)
-            let loss_players = self.get_pktlost_players(200, players_lock.clone()).await; // 5 seconds timeout
+            let mut loss_players: Vec<SocketAddr> = Vec::new();
+            for plr in players_lock.values() {
+                let server_send = self.socket.stats_for(&plr.addr).await.unwrap().0;
+                let server_recv = self.socket.stats_for(&plr.addr).await.unwrap().2;
+                // println!("{} --- Send:{},Recv:{}", plr.addr, server_send, server_recv,);
+                // Found Packet loss
+                if (((plr.sent_pkt as f64 / server_recv as f64)
+                    + (server_send as f64 / plr.recv_pkt as f64))
+                    / 2.0
+                    < 0.98) && plr.sent_pkt > 200
+                {
+                    loss_players.push(plr.addr);
+                }
+            }
             let i: Vec<SocketAddr> = loss_players.clone();
             let baits = cur_bait;
             for id in i {
@@ -521,28 +543,13 @@ impl GameServer {
                 let mut all_bait_arr = String::new();
                 for bait in baits.iter() {
                     all_bait_arr.push_str(&format!(
-                        "{}31,{},{},{}",
-                        COMM_START_NEW_MESS, bait.x, bait.y, bait.size
+                        "{}31,{},{},{},{},",
+                        COMM_START_NEW_MESS, bait.x, bait.y, bait.size, bait.color
                     ));
                 }
-                if !all_bait_arr.is_empty() {
-                    if let Err(e) = self.socket.send_to(all_bait_arr.as_bytes(), id).await {
-                        eprintln!("Failed to send welcome to {}: {}", id, e);
-                    }
-                }
-
-                // let msg = format!("{}7,{}", COMM_START_NEW_MESS, id);
-
-                // // Notify remaining players
-                // for player in players_lock.values() {
-                //     if player.addr != id {
-                //         if let Err(e) = self
-                //             .socket
-                //             .send_to(msg.clone().as_bytes(), player.addr)
-                //             .await
-                //         {
-                //             eprintln!("Failed to send welcome to {}: {}", player.addr, e);
-                //         }
+                // if !all_bait_arr.is_empty() {
+                //     if let Err(e) = self.socket.send_to(all_bait_arr.as_bytes(), id).await {
+                //         eprintln!("Failed to send welcome to {}: {}", id, e);
                 //     }
                 // }
             }
@@ -561,7 +568,7 @@ impl GameServer {
 
         for (i, player) in players {
             let elapsed = player.last_seen.elapsed().as_secs();
-            println!("Last seen:{}", elapsed);
+            // println!("Last seen:{}", elapsed);
             if elapsed > timeout_secs {
                 inactive_ids.push(i);
             }
@@ -590,7 +597,7 @@ impl GameServer {
 
         for (i, player) in players {
             let elapsed = player.last_seen.elapsed().as_millis();
-            println!("Last seen:{}", elapsed);
+            // println!("Last seen:{}", elapsed);
             if elapsed > timeout_milis {
                 inactive_ids.push(i);
             }
@@ -690,8 +697,8 @@ impl GameServer {
         let bait = self.baits.lock().await;
         for bait_info in bait.iter() {
             let bait_msg = format!(
-                "{}3,{},{},{}",
-                COMM_START_NEW_MESS, bait_info.x, bait_info.y, bait_info.size
+                "{}3,{},{},{},{},",
+                COMM_START_NEW_MESS, bait_info.x, bait_info.y, bait_info.size, bait_info.color
             );
 
             self.socket
