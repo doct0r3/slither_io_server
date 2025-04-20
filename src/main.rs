@@ -98,8 +98,12 @@ impl GameServer {
                     Ok((len, addr)) => {
                         let data = &buf[..len];
                         let mut players_lock = players.lock().await;
+
+                        let message = String::from_utf8_lossy(data);
+                        let splitted: Vec<&str> = message.split(',').collect();
+
                         if !players_lock.contains_key(&addr)
-                            && String::from_utf8_lossy(data).contains("9")
+                            && splitted[0] == "9"
                         {
                             // let lk1 = players_lock.clone();
                             // New player
@@ -157,30 +161,30 @@ impl GameServer {
                     }
                 }
             }
-            "9" => {
-                // Player sends their name to all other players
-                if let Some(player) = player_id_opt {
-                    if splitted.len() >= 2 {
-                        let name = splitted[1].to_string();
+            // "9" => {
+            //     // Player sends their name to all other players
+            //     if let Some(player) = player_id_opt {
+            //         if splitted.len() >= 2 {
+            //             let name = splitted[1].to_string();
 
-                        // Update the player's name
-                        player.update_player_name(name.clone());
+            //             // Update the player's name
+            //             player.update_player_name(name.clone());
 
-                        // Notify all other players
-                        let msg_enemy_name =
-                            format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
+            //             // Notify all other players
+            //             let msg_enemy_name =
+            //                 format!("{}{}{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, player.id,);
 
-                        for &i in lk.keys() {
-                            if i != player.addr {
-                                self.socket
-                                    .send_to(msg_enemy_name.clone().as_bytes(), i)
-                                    .await
-                                    .unwrap();
-                            }
-                        }
-                    }
-                }
-            }
+            //             for &i in lk.keys() {
+            //                 if i != player.addr {
+            //                     self.socket
+            //                         .send_to(msg_enemy_name.clone().as_bytes(), i)
+            //                         .await
+            //                         .unwrap();
+            //                 }
+            //             }
+            //         }
+            //     }
+            // }
             "10" => {
                 // Player is accelerating
                 if let Some(player_id) = player_id_opt {
@@ -642,7 +646,9 @@ impl GameServer {
         );
 
         // Create the player
-        let  mut new_player = Player::new(player_id, "Unnamed".to_string(), player_snake.clone(), addr);
+        let name = splitted[1].to_string();
+
+        let new_player = Player::new(player_id, name, player_snake.clone(), addr);
 
         // Send first snake back to the client
         let mut msg = format!("{}1,", COMM_START_NEW_MESS);
@@ -657,28 +663,28 @@ impl GameServer {
 
         // Player sends their name to all other players
 
-        if splitted.len() >= 2 {
-            let name = splitted[1].to_string();
+        // Update the player's name
 
-            // Update the player's name
-            new_player.update_player_name(name.clone());
+        // Notify all other players
+        let msg_enemy_name = format!(
+            "{}{}{},{}",
+            COMM_START_NEW_MESS, COMM_ENEMY_NAME, new_player.id, new_player.name
+        );
 
-            // Notify all other players
-            let msg_enemy_name =
-                format!("{}{},{},{}", COMM_START_NEW_MESS, COMM_ENEMY_NAME, new_player.id, new_player.name);
-
-            for &i in players_lock.keys() {
-                if i != new_player.addr {
-                    self.socket
-                        .send_to(msg_enemy_name.clone().as_bytes(), i)
-                        .await
-                        .unwrap();
-                }
+        for &i in players_lock.keys() {
+            if i != new_player.addr {
+                self.socket
+                    .send_to(msg_enemy_name.clone().as_bytes(), i)
+                    .await
+                    .unwrap();
             }
         }
 
         // Prepare new enemy message for other players
-        let new_enemy_msg = format!("{}5,{},{},", COMM_START_NEW_MESS, player_id, new_player.name);
+        let new_enemy_msg = format!(
+            "{}5,{},{},",
+            COMM_START_NEW_MESS, player_id, new_player.name
+        );
 
         let mut full_enemy_msg = new_enemy_msg;
         for (i, node) in player_snake.nodes.iter().enumerate() {
