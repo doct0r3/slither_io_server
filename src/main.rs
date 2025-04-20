@@ -226,6 +226,7 @@ impl GameServer {
             let mut cur_bait = baits_c.lock().await;
             let mut msg_new_bait_arr = String::new();
             let mut dead_players = Vec::new();
+            let mut dead_players_addr = Vec::new();
 
             if cur_bait.len() < MAX_BAITS as usize {
                 let initial_bait = generate_bait(OFFSET_X + 10.0, TRUE_MAP_WIDTH - 10.0);
@@ -313,6 +314,7 @@ impl GameServer {
                             }
 
                             dead_players.push(other_player.id);
+                            dead_players_addr.push(other_player.addr);
 
                             // Notify player about death
                             let death_msg = format!("{}8", COMM_START_NEW_MESS);
@@ -353,6 +355,11 @@ impl GameServer {
                 }
             }
 
+            // remove player
+            for ina in dead_players_addr {
+                players_lock.remove(&ina);
+            }
+
             // Check if a player eats a bait
             let bt_lk = cur_bait.clone();
 
@@ -389,7 +396,6 @@ impl GameServer {
                         deleted_baits.push(bait_tmp);
                     }
                 }
-
             }
             cur_remove.dedup();
 
