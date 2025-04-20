@@ -1,8 +1,8 @@
 mod bait;
 mod collision;
 pub mod constants;
+mod my_udp_socket;
 mod player;
-
 
 use std::{
     collections::HashMap,
@@ -12,7 +12,6 @@ use std::{
 };
 
 use tokio::{
-    net::UdpSocket,
     sync::{Mutex, MutexGuard},
     time::{self, Duration},
 };
@@ -21,6 +20,7 @@ use crate::bait::Bait;
 use crate::player::{Player, snake::Snake};
 use collision::{Rect, rect_intersect};
 use constants::*;
+use my_udp_socket::MyUdpSocket;
 
 // Generate a random bait
 pub fn generate_bait(low: f64, high: f64) -> Bait {
@@ -60,7 +60,7 @@ pub fn generate_mass_bait(snake: &Snake) -> Vec<bait::Bait> {
 
 /// Main game server struct
 struct GameServer {
-    socket: Arc<UdpSocket>,
+    socket: Arc<MyUdpSocket>,
     players: Arc<Mutex<HashMap<SocketAddr, Player>>>,
     baits: Arc<Mutex<Vec<Bait>>>,
 }
@@ -68,7 +68,7 @@ struct GameServer {
 impl GameServer {
     /// Create a new GameServer bound to the given address
     async fn new(bind_addr: &str) -> tokio::io::Result<Self> {
-        let socket = UdpSocket::bind(bind_addr).await?;
+        let socket = MyUdpSocket::bind(bind_addr).await?;
         Ok(Self {
             socket: Arc::new(socket),
             players: Arc::new(Mutex::new(HashMap::new())),
@@ -110,7 +110,12 @@ impl GameServer {
     }
 
     /// Handle incoming commands from existing players
-    async fn handle_command(&self, addr: SocketAddr, data: &[u8], mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
+    async fn handle_command(
+        &self,
+        addr: SocketAddr,
+        data: &[u8],
+        mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>,
+    ) {
         let message = String::from_utf8_lossy(data);
         let splitted: Vec<&str> = message.split(',').collect();
 
@@ -130,10 +135,7 @@ impl GameServer {
                 // Update player's mouse position
                 if let Some(player_id) = player_id_opt {
                     if splitted.len() >= 5 {
-                        if splitted[1].parse().unwrap_or(0.0) == 0.0 {
-                            println!("RESET!!!");
-                            
-                        }
+                        player_id.update_last_seen();
                         player_id.update_xy(
                             splitted[1].parse().unwrap_or(0.0),
                             splitted[2].parse().unwrap_or(0.0),
@@ -158,7 +160,10 @@ impl GameServer {
 
                         for &i in lk.keys() {
                             if i != player.addr {
-                                self.socket.send_to(msg_enemy_name.clone().as_bytes(), i).await.unwrap();
+                                self.socket
+                                    .send_to(msg_enemy_name.clone().as_bytes(), i)
+                                    .await
+                                    .unwrap();
                             }
                         }
                     }
@@ -176,6 +181,16 @@ impl GameServer {
                     player_id.update_player_acceleration(false);
                 };
             }
+            "12" => {
+                // Player send packet stat report
+                if let Some(player_id) = player_id_opt {
+                    player_id.update_player_pkt_stat(
+                        splitted[1].parse().unwrap_or(0),
+                        splitted[2].parse().unwrap_or(0),
+                    );
+                    println!("received pkt report");
+                };
+            }
             _ => {
                 println!("Inrecognized Command");
             }
@@ -186,9 +201,13 @@ impl GameServer {
     async fn game_loop(self: Arc<Self>) {
         // let mut last_time = SystemTime::now();
         let mut interval = time::interval(Duration::from_millis(GAME_LOOP_DELAY as u64));
-        
+
         loop {
-            
+            // println!(
+            //     "Send:{},Recv:{}",
+            //     self.socket.stats().sent_packets(),
+            //     self.socket.stats().received_packets()
+            // );
             interval.tick().await;
             let baits_c = Arc::clone(&self.baits);
             let player_c = Arc::clone(&self.players);
@@ -290,7 +309,6 @@ impl GameServer {
                             {
                                 eprintln!("Failed to send welcome to {}: {}", other_player.addr, e);
                             }
-
 
                             break;
                         }
@@ -407,7 +425,7 @@ impl GameServer {
                         msg_update_player.push(',');
                     }
                 }
-                println!("Send msg_update_player {} to{}",msg_update_player,player.addr);
+                // println!("Send msg_update_player {} to{}",msg_update_player,player.addr);
                 if let Err(e) = self
                     .socket
                     .send_to(msg_update_player.as_bytes(), player.addr)
@@ -467,7 +485,8 @@ impl GameServer {
             }
 
             // Clean up inactive players (UDP connection management)
-            let inactive_players = self.clean_inactive_players(30, players_lock.clone()).await; // 30 seconds timeout
+            let inactive_players = self.get_inactive_players(5, players_lock.clone()).await; // 5 seconds timeout
+            let i: Vec<SocketAddr> = inactive_players.clone();
             for id in inactive_players {
                 println!("Player {} disconnected due to inactivity", id);
                 let msg = format!("{}7,{}", COMM_START_NEW_MESS, id);
@@ -485,17 +504,64 @@ impl GameServer {
                     }
                 }
             }
+
+            // remove player
+            for ina in i {
+                players_lock.remove(&ina);
+            }
+
+            // Clean up inactive players (UDP connection management)
+            let loss_players = self.get_pktlost_players(200, players_lock.clone()).await; // 5 seconds timeout
+            let i: Vec<SocketAddr> = loss_players.clone();
+            let baits = cur_bait;
+            for id in i {
+                println!("Player {} is in high packet loss env, sync status:", id);
+
+                println!("Sync all current baits");
+                let mut all_bait_arr = String::new();
+                for bait in baits.iter() {
+                    all_bait_arr.push_str(&format!(
+                        "{}31,{},{},{}",
+                        COMM_START_NEW_MESS, bait.x, bait.y, bait.size
+                    ));
+                }
+                if !all_bait_arr.is_empty() {
+                    if let Err(e) = self.socket.send_to(all_bait_arr.as_bytes(), id).await {
+                        eprintln!("Failed to send welcome to {}: {}", id, e);
+                    }
+                }
+
+                // let msg = format!("{}7,{}", COMM_START_NEW_MESS, id);
+
+                // // Notify remaining players
+                // for player in players_lock.values() {
+                //     if player.addr != id {
+                //         if let Err(e) = self
+                //             .socket
+                //             .send_to(msg.clone().as_bytes(), player.addr)
+                //             .await
+                //         {
+                //             eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                //         }
+                //     }
+                // }
+            }
         }
     }
 
     // Remove players that haven't been seen in a while (UDP connection management)
-    pub async fn clean_inactive_players(&self, timeout_secs: u64, players_lock: HashMap<SocketAddr, Player>) -> Vec<SocketAddr> {
+    pub async fn get_inactive_players(
+        &self,
+        timeout_secs: u64,
+        players_lock: HashMap<SocketAddr, Player>,
+    ) -> Vec<SocketAddr> {
         let mut inactive_ids = Vec::new();
         let mut plr = players_lock;
         let players = plr.clone().into_iter();
 
         for (i, player) in players {
             let elapsed = player.last_seen.elapsed().as_secs();
+            println!("Last seen:{}", elapsed);
             if elapsed > timeout_secs {
                 inactive_ids.push(i);
             }
@@ -511,9 +577,43 @@ impl GameServer {
 
         inactive_ids
     }
+
+    // Remove players that haven't been seen in a while (UDP connection management)
+    pub async fn get_pktlost_players(
+        &self,
+        timeout_milis: u128,
+        players_lock: HashMap<SocketAddr, Player>,
+    ) -> Vec<SocketAddr> {
+        let mut inactive_ids = Vec::new();
+        let mut plr = players_lock;
+        let players = plr.clone().into_iter();
+
+        for (i, player) in players {
+            let elapsed = player.last_seen.elapsed().as_millis();
+            println!("Last seen:{}", elapsed);
+            if elapsed > timeout_milis {
+                inactive_ids.push(i);
+            }
+        }
+
+        // Remove inactive players
+        for id in &inactive_ids {
+            // if *id < players.len() {
+            //     players[*id] = None;
+            // }
+            plr.remove(id);
+        }
+
+        inactive_ids
+    }
+
     /// Handle creation of a new player
 
-    async fn create_player(&self, addr: SocketAddr, mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>) {
+    async fn create_player(
+        &self,
+        addr: SocketAddr,
+        mut players_lock: MutexGuard<'_, HashMap<SocketAddr, Player>>,
+    ) {
         let player_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -570,7 +670,6 @@ impl GameServer {
                     }
                 }
             }
-
         }
 
         if !data.is_empty() {
@@ -580,7 +679,10 @@ impl GameServer {
         // Send new player to all other players
         for other_player in players_lock.values() {
             if other_player.addr != new_player.addr {
-                self.socket.send_to(full_enemy_msg.clone().as_bytes(), addr).await.unwrap();
+                self.socket
+                    .send_to(full_enemy_msg.clone().as_bytes(), addr)
+                    .await
+                    .unwrap();
             }
         }
 
@@ -591,9 +693,11 @@ impl GameServer {
                 "{}3,{},{},{}",
                 COMM_START_NEW_MESS, bait_info.x, bait_info.y, bait_info.size
             );
-            
-            self.socket.send_to(bait_msg.as_bytes(), addr).await.unwrap();
 
+            self.socket
+                .send_to(bait_msg.as_bytes(), addr)
+                .await
+                .unwrap();
         }
 
         println!("Total player(s): {}", players_lock.len());
@@ -610,16 +714,8 @@ async fn main() -> tokio::io::Result<()> {
     server.clone().start_listener();
 
     // Start the game loop in background
-    let game_handle = server.clone().game_loop().await;
     println!("Running...");
-    // Wait for Ctrl-C to shut down
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to listen for ctrl-c");
+    server.clone().game_loop().await;
     println!("Shutting down server...");
-
-    // // Stop the game loop
-    // game_handle.abort();
-
     Ok(())
 }

@@ -16,6 +16,8 @@ pub struct Player {
     pub window_w: u32,
     pub window_h: u32,
     pub last_seen: Instant,
+    pub sent_pkt: u32,
+    pub recv_pkt: u32,
 }
 
 impl Player {
@@ -30,10 +32,12 @@ impl Player {
             window_w: 0,
             window_h: 0,
             last_seen: Instant::now(),
+            sent_pkt: 0,
+            recv_pkt: 0,
         }
     }
 
-    pub fn get_snake(&mut self)-> &mut Snake{
+    pub fn get_snake(&mut self) -> &mut Snake {
         &mut self.snake
     }
 
@@ -56,8 +60,9 @@ impl Player {
         self.snake.accelerate = accelerate;
     }
 
-    pub fn update_player_snake(&mut self, new_snake: Snake) {
-        self.snake = new_snake;
+    pub fn update_player_pkt_stat(&mut self, send_pkt: u32, recv_pkt: u32) {
+        self.sent_pkt = send_pkt;
+        self.recv_pkt = recv_pkt;
     }
 
     pub fn grow_player_snake(&mut self) {
@@ -80,6 +85,8 @@ impl Clone for Player {
             window_w: self.window_w,
             window_h: self.window_h,
             last_seen: self.last_seen,
+            sent_pkt: self.sent_pkt,
+            recv_pkt: self.recv_pkt,
         }
     }
 }
