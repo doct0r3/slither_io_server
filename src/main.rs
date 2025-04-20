@@ -493,7 +493,7 @@ impl GameServer {
                 let mut msg_update_enemies_position = String::new();
 
                 for other_player in players_lock.values() {
-                    if player == other_player {
+                    if player.addr == other_player.addr {
                         continue;
                     }
 
@@ -741,7 +741,7 @@ impl GameServer {
         for other_player in players_lock.values() {
             if other_player.addr != new_player.addr {
                 self.socket
-                    .send_to(full_enemy_msg.clone().as_bytes(), addr)
+                    .send_to(full_enemy_msg.clone().as_bytes(), other_player.addr)
                     .await
                     .unwrap();
             }
