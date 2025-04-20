@@ -102,9 +102,7 @@ impl GameServer {
                         let message = String::from_utf8_lossy(data);
                         let splitted: Vec<&str> = message.split(',').collect();
 
-                        if !players_lock.contains_key(&addr)
-                            && splitted[0] == "9"
-                        {
+                        if !players_lock.contains_key(&addr) && splitted[0] == "9" {
                             // let lk1 = players_lock.clone();
                             // New player
                             self.create_player(addr, data, players_lock).await;
@@ -355,23 +353,15 @@ impl GameServer {
                 }
             }
 
-            // Send new baits to all players
-            if !msg_new_bait_arr.is_empty() {
-                for player in players_lock.values() {
-                    if let Err(e) = self
-                        .socket
-                        .send_to(msg_new_bait_arr.as_bytes(), player.addr)
-                        .await
-                    {
-                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
-                    }
-                }
-            }
-
             // Check if a player eats a bait
             let bt_lk = cur_bait.clone();
             let bait_key = &bt_lk.iter().enumerate();
+            let nb_cl = new_bait_arr.clone();
+            let nb_key = &nb_cl.iter().enumerate();
+            
             let mut deleted_baits = Vec::new();
+            let mut cur_remove = Vec::new();
+            let mut new_remove = Vec::new();
             let mut msg_grown_players = String::new();
 
             for player in players_lock.values_mut() {
@@ -396,12 +386,60 @@ impl GameServer {
                         player.grow_player_snake();
                         msg_grown_players
                             .push_str(&format!("{}62,{}", COMM_START_NEW_MESS, plr_id));
-                        cur_bait.remove(idx);
+                        // cur_bait.remove(idx);
+                        cur_remove.push(idx);
                         // bait::destroy(j);
                         deleted_baits.push(bait_tmp);
                     }
                 }
+
+                // Remove no longer available new baits
+                for (idx ,bait_tmp) in nb_key.clone()  {
+                    let bait_rect = Rect {
+                        top: bait_tmp.y - bait_tmp.size / 2.0,
+                        left: bait_tmp.x - bait_tmp.size / 2.0,
+                        right: bait_tmp.x + bait_tmp.size / 2.0,
+                        bottom: bait_tmp.y + bait_tmp.size / 2.0,
+                    };
+
+                    if rect_intersect(&player_i_head, &bait_rect) {
+                        // new_bait_arr.remove(idx - new_remove_cnt);
+                        new_remove.push(idx);
+                    }
+                }
             }
+            cur_remove.dedup();
+            new_remove.dedup();
+
+            for i in cur_remove.iter().rev(){
+                cur_bait.remove(*i);
+            }
+
+            for i in new_remove.iter().rev(){
+                new_bait_arr.remove(*i);
+            }
+
+            // Instantly clear to avoid multiple collision
+            for bait in &new_bait_arr {
+                msg_new_bait_arr.push_str(&format!(
+                    "{}3,{},{},{},{},",
+                    COMM_START_NEW_MESS, bait.x, bait.y, bait.size, bait.color
+                ));
+            }
+            if !msg_new_bait_arr.is_empty() {
+                for player in players_lock.values() {
+                    if let Err(e) = self
+                        .socket
+                        .send_to(msg_new_bait_arr.as_bytes(), player.addr)
+                        .await
+                    {
+                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
+                    }
+                }
+            }
+            new_bait_arr.clear();
+            msg_new_bait_arr.clear();
+
             // Inform players about deleted baits
             let mut msg_deleted_baits = String::new();
             for bait in &deleted_baits {
@@ -481,25 +519,6 @@ impl GameServer {
                     }
                 }
             }
-
-            for bait in &new_bait_arr {
-                msg_new_bait_arr.push_str(&format!(
-                    "{}3,{},{},{},{},",
-                    COMM_START_NEW_MESS, bait.x, bait.y, bait.size, bait.color
-                ));
-            }
-            if !msg_new_bait_arr.is_empty() {
-                for player in players_lock.values() {
-                    if let Err(e) = self
-                        .socket
-                        .send_to(msg_new_bait_arr.as_bytes(), player.addr)
-                        .await
-                    {
-                        eprintln!("Failed to send welcome to {}: {}", player.addr, e);
-                    }
-                }
-            }
-
             // Clean up inactive players (UDP connection management)
             let inactive_players = self.get_inactive_players(5, players_lock.clone()).await; // 5 seconds timeout
             let i: Vec<SocketAddr> = inactive_players.clone();
