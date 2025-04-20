@@ -355,13 +355,10 @@ impl GameServer {
 
             // Check if a player eats a bait
             let bt_lk = cur_bait.clone();
-            let bait_key = &bt_lk.iter().enumerate();
-            let nb_cl = new_bait_arr.clone();
-            let nb_key = &nb_cl.iter().enumerate();
-            
+
             let mut deleted_baits = Vec::new();
             let mut cur_remove = Vec::new();
-            let mut new_remove = Vec::new();
+            // let mut new_remove = Vec::new();
             let mut msg_grown_players = String::new();
 
             for player in players_lock.values_mut() {
@@ -372,7 +369,7 @@ impl GameServer {
                     right: player.snake.nodes[0].x + SNAKE_INITIAL_SIZE / 2.0,
                     bottom: player.snake.nodes[0].y + SNAKE_INITIAL_SIZE / 2.0,
                 };
-                let bk = bait_key.clone();
+                let bk = bt_lk.iter().enumerate();
                 for (idx, bait_tmp) in bk {
                     let bait_rect = Rect {
                         top: bait_tmp.y - bait_tmp.size / 2.0,
@@ -393,32 +390,12 @@ impl GameServer {
                     }
                 }
 
-                // Remove no longer available new baits
-                for (idx ,bait_tmp) in nb_key.clone()  {
-                    let bait_rect = Rect {
-                        top: bait_tmp.y - bait_tmp.size / 2.0,
-                        left: bait_tmp.x - bait_tmp.size / 2.0,
-                        right: bait_tmp.x + bait_tmp.size / 2.0,
-                        bottom: bait_tmp.y + bait_tmp.size / 2.0,
-                    };
-
-                    if rect_intersect(&player_i_head, &bait_rect) {
-                        // new_bait_arr.remove(idx - new_remove_cnt);
-                        new_remove.push(idx);
-                    }
-                }
             }
             cur_remove.dedup();
-            new_remove.dedup();
 
-            for i in cur_remove.iter().rev(){
+            for i in cur_remove.iter().rev() {
                 cur_bait.remove(*i);
             }
-
-            for i in new_remove.iter().rev(){
-                new_bait_arr.remove(*i);
-            }
-
             // Instantly clear to avoid multiple collision
             for bait in &new_bait_arr {
                 msg_new_bait_arr.push_str(&format!(
